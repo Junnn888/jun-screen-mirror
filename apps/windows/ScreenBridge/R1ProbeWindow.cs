@@ -11,6 +11,9 @@ using Vortice.DXGI;
 using Vortice.Mathematics;
 using static Vortice.Direct3D11.D3D11;
 using static Vortice.DXGI.DXGI;
+// Disambiguate the two imported ResultCode types (CS0104). Present()/swapchain
+// results (DeviceRemoved, Occluded, WasStillDrawing) live in Vortice.DXGI.
+using ResultCode = Vortice.DXGI.ResultCode;
 
 namespace ScreenBridge;
 

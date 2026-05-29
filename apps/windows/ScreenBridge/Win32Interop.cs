@@ -73,8 +73,10 @@ internal static partial class Win32
         public int Height => bottom - top;
     }
 
-    [LibraryImport("user32.dll", EntryPoint = "RegisterClassExW")]
-    public static partial ushort RegisterClassExW(in WNDCLASSEXW wc);
+    // WNDCLASSEXW carries string fields, so it is non-blittable and unsupported
+    // by [LibraryImport] source-gen (SYSLIB1051); classic [DllImport] marshals it.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern ushort RegisterClassExW(in WNDCLASSEXW wc);
 
     [LibraryImport("user32.dll", EntryPoint = "CreateWindowExW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     public static partial nint CreateWindowExW(
