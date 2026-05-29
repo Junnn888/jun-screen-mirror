@@ -9,7 +9,7 @@
 |---|---|---|
 | Rust (stable) | 1.95+ (rust-version floor 1.77) | the `core/` workspace + `cbindgen` (build-dep) |
 | .NET SDK | 8.0+ (10.0 also works via roll-forward) | C# interop library + ping tests; WinUI 3 app (Windows) |
-| Xcode / Swift | 15+ / Swift 5.9+ (tested Xcode 26, Swift 6.3) | macOS SwiftUI app shell (SPM) |
+| Xcode / Swift | 16+ / Swift 6.0+ (tested Xcode 26, Swift 6.3) | macOS SwiftUI app shell (SPM), built in Swift 6 language mode |
 | Windows + Windows App SDK | windows-latest CI image, or VS 2022 17.10+ | building/running the WinUI 3 app shell |
 
 `cbindgen` does **not** need to be installed separately — it is a build
@@ -90,7 +90,7 @@ dotnet publish apps/windows/ScreenBridge/ScreenBridge.csproj -c Release -p:Platf
 
 ## CI
 
-`.github/workflows/ci.yml` runs the Phase 0 gate on `macos-14` and
+`.github/workflows/ci.yml` runs the Phase 0 gate on `macos-15` and
 `windows-latest`: build core, regenerate + verify the header, clippy/fmt, core
 tests, both app shells, and both Swift and C# ping tests.
 

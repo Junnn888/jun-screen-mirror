@@ -17,8 +17,13 @@ concurrency:
 
 jobs:
   macos:
-    name: core + macOS app (macos-14)
-    runs-on: macos-14
+    name: core + macOS app (macos-15)
+    # macos-15's default Xcode 16.4 ships Swift 6 — required by the SwiftUI
+    # package's swift-tools-version 6.0 (Swift 6 language mode, adopted in Phase
+    # 1). macos-14's default is Swift 5.10, which cannot even parse a 6.0 manifest
+    # (SPM errors before compiling). The default can only move up from 6.1, so the
+    # 6.0 floor stays satisfied without pinning an Xcode-selection action.
+    runs-on: macos-15
     env:
       # Match the SwiftUI package's deployment floor (PLAN.md §3: macOS 13+) so
       # the native lib links without a version-mismatch warning.

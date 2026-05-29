@@ -1,4 +1,9 @@
 // swift-tools-version: 6.0
+// Swift 6 language mode (the default at tools-version 6.0) gives compile-time
+// data-race & actor-isolation checking for the Phase 1+ capture→encode→render→FFI
+// pipeline. Needs a Swift 6 toolchain (Xcode 16+); CI runs on macos-15. Do NOT
+// lower this to silence an older-toolchain error — bump the toolchain instead
+// (macos-14's default Swift 5.10 cannot even parse a 6.0 manifest). See docs/build.md.
 import PackageDescription
 import Foundation
 
