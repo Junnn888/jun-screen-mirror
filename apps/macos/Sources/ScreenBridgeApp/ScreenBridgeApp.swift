@@ -1,16 +1,25 @@
 import SwiftUI
+import AppKit
 import CScreenBridge
 
-/// ScreenBridge macOS app shell (PLAN.md §8 Phase 0).
+/// ScreenBridge macOS app shell.
 ///
-/// Phase 0 is an empty window plus a Swift → Rust core FFI liveness check on
-/// launch. Screen capture, hardware encode and the AVSampleBufferDisplayLayer
-/// render path (PLAN.md §3) arrive in Phase 1; nothing else is built here.
+/// Phase 0 was an empty window plus a Swift → Rust core FFI liveness check on
+/// launch. Phase 1 (this build) hosts the Risk-R1 capture-probe: the real
+/// `AVSampleBufferDisplayLayer` viewer surface (PLAN.md §3) driven by synthetic
+/// animated frames, so its capturability in Discord/OBS is proven before the
+/// capture→encode→decode pipeline is built on top (PLAN.md §10 R1). See
+/// `R1Probe.swift`.
 ///
 /// NOTE: this file must NOT be named `main.swift` — `@main` and top-level code
 /// are mutually exclusive in an SPM executable target.
 @main
 struct ScreenBridgeApp: App {
+    // A bare SPM executable launches without a regular activation policy, so its
+    // window would not behave as (or be reliably capturable as) a normal app
+    // window. The delegate promotes it to a regular, focusable, front app.
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         // Prove the Swift → Rust core C ABI round-trip at launch. The
         // deterministic verification lives in the XCTest target so headless CI
@@ -28,10 +37,19 @@ struct ScreenBridgeApp: App {
     }
 }
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
 private struct ContentView: View {
     var body: some View {
-        // Empty shell window for Phase 0.
-        Text("ScreenBridge")
-            .frame(minWidth: 480, minHeight: 320)
+        // The R1 capture-probe surface fills the window edge-to-edge so a
+        // window-capture of this window shows the live viewer content.
+        R1ProbeView()
+            .frame(minWidth: 640, minHeight: 360)
+            .frame(idealWidth: 960, idealHeight: 540)
     }
 }

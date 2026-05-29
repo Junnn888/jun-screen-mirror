@@ -8,6 +8,9 @@
         <TextBlock x:Name="StatusText"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"
+                   TextWrapping="WrapWholeWords"
+                   MaxWidth="560"
+                   Margin="24"
                    Text="ScreenBridge" />
     </Grid>
 </Window>

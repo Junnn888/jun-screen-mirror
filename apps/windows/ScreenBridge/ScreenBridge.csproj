@@ -32,12 +32,26 @@
 
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- The [LibraryImport] source generator (Win32Interop.cs) emits unsafe
+         marshalling stubs for the string/struct signatures, so unsafe blocks
+         must be enabled. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Pinned to a known-good stable; safe to float as 1.7.* if desired.
          Microsoft.Windows.SDK.BuildTools flows in transitively. -->
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.260224002" />
+
+    <!-- Vortice.Windows: managed D3D11/DXGI bindings for the Phase-1 R1 probe's
+         flip-model swapchain (PLAN.md §3, §10 R1). Vortice.Direct3D11 pulls in
+         DXGI/DirectX/Mathematics transitively; the latter two are pinned for
+         explicitness. NB: Vortice.Mathematics versions independently (2.x), not
+         on the 3.8.x line. -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+    <PackageReference Include="Vortice.Mathematics" Version="2.1.0" />
   </ItemGroup>
 
   <ItemGroup>
