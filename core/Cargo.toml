@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/transport",
+    "crates/session",
+    "crates/security",
+    "crates/discovery",
+    "crates/ffi",
+]
+
+# Shared metadata for every crate in the ScreenBridge core workspace.
+# Per PLAN.md §3 the core is a memory-safe Rust workspace; per §7 dependencies
+# are pinned and kept minimal. Phase 0 deliberately has almost no dependencies —
+# transport/session/security/discovery are skeletons that gain their crates in
+# their respective phases (§8).
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+authors = ["Junnn888"]
+license = "Apache-2.0"
+repository = "https://github.com/Junnn888/jun-screen-mirror"
+rust-version = "1.77"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+# Release profile tuned for the eventual low-latency media path (§8 Phase 4).
+# Kept here so every crate builds consistently from Phase 0 onward.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind" # FFI relies on catch_unwind at the boundary (§3, §6.4); never abort-on-panic.

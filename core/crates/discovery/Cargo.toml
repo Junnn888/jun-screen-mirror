@@ -1,0 +1,15 @@
+[package]
+name = "screenbridge-discovery"
+description = "mDNS advertise/browse for _screenbridge._udp.local (PLAN.md §3, Phase 2)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "screenbridge_discovery"
+
+[lints]
+workspace = true

@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ScreenBridge Windows app shell (PLAN.md §3: WinUI 3 shell). Phase 0 is an
+    empty window plus a C# -> Rust core FFI liveness check on launch.
+
+    UNPACKAGED (WindowsPackageType=None) so it builds on a GitHub windows-latest
+    runner with the dotnet CLI alone — no Visual Studio, no `dotnet workload
+    install`, no setup-msbuild. The WinUI build targets ship inside the
+    Microsoft.WindowsAppSDK NuGet package.
+
+    IMPORTANT: WinUI cannot build as AnyCPU. CI passes `-p:Platform=x64` AND an
+    explicit `-p:RuntimeIdentifier=win-x64`: on SDKs newer than 8.0 (which the
+    windows-latest runner preinstalls) Platform alone still infers the invalid
+    RID `win-AnyCPU` (NETSDK1083, dotnet/sdk#49744). See ci.yml and docs/build.md.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>ScreenBridge</RootNamespace>
+    <AssemblyName>ScreenBridge</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+
+    <!-- WinUI requires a concrete platform/RID; never AnyCPU. -->
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned to a known-good stable; safe to float as 1.7.* if desired.
+         Microsoft.Windows.SDK.BuildTools flows in transitively. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.260224002" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ScreenBridge.Interop\ScreenBridge.Interop.csproj" />
+  </ItemGroup>
+
+  <!--
+    Deploy the Rust cdylib beside the .exe so the default DllImport probe finds
+    it. CI builds the core first (release profile) into core/target/release/
+    screenbridge_ffi.dll and may override ScreenBridgeNativeDir. The Condition
+    keeps dev restores working when the artifact is absent.
+  -->
+  <PropertyGroup>
+    <ScreenBridgeNativeDir Condition="'$(ScreenBridgeNativeDir)' == ''">$(MSBuildThisFileDirectory)..\..\..\core\target\release</ScreenBridgeNativeDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="$(ScreenBridgeNativeDir)\screenbridge_ffi.dll"
+             Condition="Exists('$(ScreenBridgeNativeDir)\screenbridge_ffi.dll')"
+             Link="screenbridge_ffi.dll"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

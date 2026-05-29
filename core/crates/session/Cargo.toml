@@ -1,0 +1,15 @@
+[package]
+name = "screenbridge-session"
+description = "Session state machine, capability negotiation and control channel (PLAN.md §4.3, Phase 2/3)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "screenbridge_session"
+
+[lints]
+workspace = true

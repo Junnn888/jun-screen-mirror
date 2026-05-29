@@ -1,0 +1,90 @@
+# ──────────────────────────────────────────────────────────────────────────
+# ScreenBridge .gitignore
+#
+# Rule of thumb — ignore anything that is:
+#   • GENERATED  (build output: target/, bin/, obj/, .build/, the header*)
+#   • LOCAL      (per-machine / per-editor: IDE caches, .DS_Store, .claude/)
+#   • SECRET     (keys, certs, .env)
+# Keep anything that is SOURCE, or that PINS a build for reproducibility
+#   (Cargo.lock, Package.resolved) — see the "do NOT ignore" notes below.
+# ──────────────────────────────────────────────────────────────────────────
+
+## Development-only — never published (deliberate: the spec stays out of git)
+/plans
+
+## Local agent / tooling state (per-machine; not part of the product)
+.claude/
+
+## Secrets, certificates, keys — NEVER commit (PLAN.md §7, §14)
+# ScreenBridge generates self-signed certs at runtime and stores them locally
+# (TOFU); none of that belongs in version control.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt
+*.der
+*.keystore
+secrets.*
+
+## Rust / cargo (core workspace)
+/core/target/
+**/*.rs.bk
+# NOTE: core/Cargo.lock IS committed on purpose. The core ships a real binary
+# artifact (the cdylib), so a pinned lockfile gives reproducible builds across
+# machines and CI. Do NOT ignore it.
+
+## Generated C ABI header
+# NOTE: include/screenbridge.h is intentionally tracked so editors and the apps
+# have it without a prior core build. It is regenerated deterministically by
+# `cargo build` (core/crates/ffi/build.rs); do NOT ignore it.
+
+## Swift / SPM / Xcode (macOS app)
+/apps/macos/.build/
+/apps/macos/.swiftpm/
+DerivedData/
+*.xcuserstate
+**/xcuserdata/
+# NOTE: apps/macos/Package.resolved should be committed once SPM deps exist
+# (it pins their exact versions). Do NOT ignore it.
+
+## .NET / MSBuild (Windows app)
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+*.binlog
+[Tt]est[Rr]esults/
+*.trx
+*.nupkg
+
+## WinUI / MSIX packaging output (appears from Phase 5 onward)
+**/AppPackages/
+**/BundleArtifacts/
+*.appx
+*.appxbundle
+*.appxupload
+*.msix
+*.msixbundle
+*.msixupload
+*.msi
+GeneratedArtifacts/
+_pkginfo.txt
+
+## Editors / IDEs (per-developer; un-ignore a specific shared file if needed)
+.idea/
+.vscode/
+*.swp
+*~
+
+## Transient logs (commit deliberate measurement results under docs/, not as *.log)
+*.log
+
+## OS noise
+.DS_Store
+Thumbs.db
+Desktop.ini

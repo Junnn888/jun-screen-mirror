@@ -1,0 +1,15 @@
+[package]
+name = "screenbridge-security"
+description = "SPAKE2 PIN pairing, self-signed cert gen/store, key derivation and TOFU (PLAN.md §7, Phase 3)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "screenbridge_security"
+
+[lints]
+workspace = true

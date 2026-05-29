@@ -1,0 +1,15 @@
+[package]
+name = "screenbridge-transport"
+description = "QUIC transport, datagram framing/reassembly and congestion feedback (PLAN.md §4.3, Phase 2)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "screenbridge_transport"
+
+[lints]
+workspace = true

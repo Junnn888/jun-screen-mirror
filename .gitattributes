@@ -1,0 +1,8 @@
+# The cbindgen-generated header is always written with LF. Pin it (and the
+# source files whose toolchains emit LF) so a Windows checkout matches the
+# committed bytes and `cargo build` does not rewrite line endings / cause churn.
+include/screenbridge.h text eol=lf
+*.rs    text eol=lf
+*.swift text eol=lf
+*.sh    text eol=lf
+*.toml  text eol=lf

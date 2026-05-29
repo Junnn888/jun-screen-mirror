@@ -1,0 +1,27 @@
+[package]
+name = "screenbridge-ffi"
+description = "C ABI for the ScreenBridge core; cbindgen generates include/screenbridge.h (PLAN.md §6.4)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+# Named explicitly (NOT "ffi") to avoid colliding with the system `libffi`:
+# produces libscreenbridge_ffi.{a,dylib} on macOS and screenbridge_ffi.{lib,dll}
+# on Windows. `staticlib` is for embedding in the macOS app; `cdylib` is loaded
+# via P/Invoke by the Windows (.dll) and the .NET interop tests (.dylib).
+name = "screenbridge_ffi"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+screenbridge-protocol = { path = "../protocol" }
+
+[build-dependencies]
+# Generates include/screenbridge.h from this crate's public C ABI on every build.
+cbindgen = "0.27"
+
+[lints]
+workspace = true

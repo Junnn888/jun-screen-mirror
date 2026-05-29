@@ -1,0 +1,7 @@
+// Bridges the ScreenBridge C ABI into a Clang module importable from Swift.
+// `header "shim.h"` resolves relative to THIS directory; the bare include
+// inside shim.h is resolved via `-Xcc -I<repo>/include` (see Package.swift).
+module CScreenBridge {
+    header "shim.h"
+    export *
+}

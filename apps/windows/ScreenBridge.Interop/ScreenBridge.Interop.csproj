@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Cross-platform P/Invoke bindings for the ScreenBridge Rust core C ABI.
+    Deliberately NOT Windows-specific (net8.0, not net8.0-windows) so the same
+    binding can be (a) referenced by the WinUI 3 app and (b) exercised by the
+    interop tests on any OS against the cdylib (.dll/.dylib/.so). This is what
+    lets the "C# -> core ping" DoD be verified on macOS as well as Windows.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>ScreenBridge.Interop</RootNamespace>
+    <AssemblyName>ScreenBridge.Interop</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- LibraryImport source generator may emit unsafe marshalling stubs. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+</Project>

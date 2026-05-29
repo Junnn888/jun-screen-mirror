@@ -1,0 +1,126 @@
+name: CI
+
+# Phase 0 gate (PLAN.md §8): build the Rust core + both app shells on macOS and
+# Windows, regenerate the cbindgen header, and prove the round-trip "ping" from
+# both Swift and C#.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# No external network calls beyond the package registries the toolchains use
+# (PLAN.md §14 forbids telemetry / runtime network beyond the LAN peer + mDNS;
+# that constraint is on the product, not the build).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: core + macOS app (macos-14)
+    runs-on: macos-14
+    env:
+      # Match the SwiftUI package's deployment floor (PLAN.md §3: macOS 13+) so
+      # the native lib links without a version-mismatch warning.
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      SCREENBRIDGE_CORE_PROFILE: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Build core (release) + generate header
+        working-directory: core
+        run: cargo build --release
+
+      - name: Verify cbindgen header was generated
+        run: test -f include/screenbridge.h && head -n 12 include/screenbridge.h
+
+      - name: Rustfmt check
+        working-directory: core
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        working-directory: core
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Core unit tests
+        working-directory: core
+        run: cargo test --release
+
+      - name: Build macOS app shell (SwiftUI / SPM)
+        run: swift build --package-path apps/macos
+
+      - name: Swift -> core ping test
+        run: swift test --package-path apps/macos
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: C# -> core ping test (against dylib)
+        env:
+          SCREENBRIDGE_CORE_LIB: ${{ github.workspace }}/core/target/release/libscreenbridge_ffi.dylib
+        run: dotnet test apps/windows/ScreenBridge.Interop.Tests/ScreenBridge.Interop.Tests.csproj -c Release
+
+  windows:
+    name: core + Windows app (windows-latest)
+    runs-on: windows-latest
+    env:
+      SCREENBRIDGE_CORE_PROFILE: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Build core (release) + generate header
+        working-directory: core
+        run: cargo build --release
+
+      - name: Verify cbindgen header was generated
+        shell: bash
+        run: test -f include/screenbridge.h
+
+      - name: Clippy (deny warnings)
+        working-directory: core
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Core unit tests
+        working-directory: core
+        run: cargo test --release
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: C# -> core ping test (against dll)
+        env:
+          SCREENBRIDGE_CORE_LIB: ${{ github.workspace }}/core/target/release/screenbridge_ffi.dll
+        run: dotnet test apps/windows/ScreenBridge.Interop.Tests/ScreenBridge.Interop.Tests.csproj -c Release
+
+      # WinUI cannot build AnyCPU. -p:Platform=x64 alone is NOT enough on SDKs
+      # newer than 8.0 (which windows-latest preinstalls and setup-dotnet does
+      # not remove): RID inference then emits the invalid 'win-AnyCPU' and fails
+      # NETSDK1083 (dotnet/sdk#49744). Passing an explicit RuntimeIdentifier
+      # sidesteps the inference under any SDK. The release cdylib built above is
+      # copied beside the .exe via the csproj Content item.
+      - name: Build Windows app shell (WinUI 3, unpackaged)
+        run: dotnet build apps/windows/ScreenBridge/ScreenBridge.csproj -c Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64
