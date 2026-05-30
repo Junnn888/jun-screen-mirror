@@ -49,6 +49,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            Console.WriteLine("[ScreenBridge] audio loopback FAILED to start: " + ex);
             status += "\n\nAudio loopback FAILED to start:\n" + ex;
         }
 
