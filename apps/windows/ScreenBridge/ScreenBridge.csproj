@@ -53,6 +53,12 @@
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
     <PackageReference Include="Vortice.Mathematics" Version="2.1.0" />
+
+    <!-- Phase-1 audio loopback: NAudio wraps WASAPI loopback+render; Concentus is
+         pure-C# Opus (PLAN.md §3 Opus-in-native). Pinned (§7). NAudio 3.0 preview
+         has a different (Span-based) API — stay on 2.3.0. -->
+    <PackageReference Include="NAudio" Version="2.3.0" />
+    <PackageReference Include="Concentus" Version="2.2.2" />
   </ItemGroup>
 
   <ItemGroup>

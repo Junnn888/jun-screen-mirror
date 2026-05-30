@@ -15,6 +15,8 @@ namespace ScreenBridge;
 public sealed partial class MainWindow : Window
 {
     private readonly R1ProbeWindowHost _probe = new();
+    // Constructed on the UI thread so NAudio's stop callbacks marshal back here.
+    private readonly WindowsAudioLoopback _audio = new();
 
     public MainWindow()
     {
@@ -26,19 +28,36 @@ public sealed partial class MainWindow : Window
             $"ScreenBridge core ping: sb_ping(41) = {pong}; " +
             $"protocol v{NativeMethods.sb_protocol_version()}; {NativeMethods.Version()}";
 
+        string status = core;
         try
         {
             _probe.Start();
-            StatusText.Text = core +
-                "\n\nR1 probe running: a separate window titled \"ScreenBridge — Viewer (R1)\" " +
-                "is rendering a live, colour-cycling flip-model D3D11 surface. Capture THAT " +
-                "window in Discord, and in OBS via Window Capture → Windows 10 (1903+)/WGC.";
+            status += "\n\nViewer running: a separate \"ScreenBridge — Viewer (R1)\" window mirrors " +
+                "your screen through the full DDA → H.264 encode → D3D11VA decode → render pipeline. " +
+                "Capture THAT window in Discord, or OBS Window Capture → Windows 10 (1903+)/WGC.";
         }
         catch (Exception ex)
         {
-            StatusText.Text = core + "\n\nR1 probe FAILED to start:\n" + ex;
+            status += "\n\nViewer FAILED to start:\n" + ex;
         }
 
-        Closed += (_, _) => _probe.Stop();
+        try
+        {
+            _audio.Start();
+            status += "\n\nAudio loopback running (WASAPI → Opus → WASAPI). NOTE: on one machine " +
+                "this feeds back — play audio briefly to verify, expect an escalating echo.";
+        }
+        catch (Exception ex)
+        {
+            status += "\n\nAudio loopback FAILED to start:\n" + ex;
+        }
+
+        StatusText.Text = status;
+
+        Closed += (_, _) =>
+        {
+            _probe.Stop();
+            _audio.Dispose();
+        };
     }
 }
