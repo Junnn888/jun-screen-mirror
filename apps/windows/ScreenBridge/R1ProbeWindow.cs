@@ -523,7 +523,7 @@ public sealed class R1ProbeWindowHost
 
         int x = Math.Clamp(p.X - MarkerSize / 2, 0, _duplicator.Width - MarkerSize);
         int y = Math.Clamp(p.Y - MarkerSize / 2, 0, _duplicator.Height - MarkerSize);
-        _context!.CopySubresourceRegion(_captureTexture, 0, x, y, 0, _markerTexture, 0, null);
+        _context!.CopySubresourceRegion(_captureTexture, 0, (uint)x, (uint)y, 0, _markerTexture, 0, null);
     }
 
     private void HandleResize()
