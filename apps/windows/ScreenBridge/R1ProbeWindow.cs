@@ -70,6 +70,12 @@ public sealed class R1ProbeWindowHost
     private ID3D11VideoProcessorInputView? _vpInputView;
     private bool _loggedFirstFrame;
 
+    // Pointer marker: DDA does not capture the cursor, so we composite a small
+    // position marker onto the desktop texture each frame (a v1 indicator — not
+    // the pixel-accurate OS cursor, which would need an alpha-blended composite).
+    private const int MarkerSize = 16;
+    private ID3D11Texture2D? _markerTexture;
+
     // W2a: Media Foundation H.264 hardware encode (display still uses the
     // passthrough above; the encoder runs alongside it and logs).
     private const int EncWidth = 1920;
@@ -277,6 +283,7 @@ public sealed class R1ProbeWindowHost
             MiscFlags = ResourceOptionFlags.None,
         };
         _captureTexture = _device!.CreateTexture2D(captureDesc);
+        CreateMarker();
 
         Win32.GetClientRect(_hwnd, out Win32.RECT rect);
         BuildVideoProcessor((uint)_duplicator.Width, (uint)_duplicator.Height,
@@ -459,6 +466,66 @@ public sealed class R1ProbeWindowHost
             });
     }
 
+    // A small BGRA marker (yellow fill, black border) uploaded once and copied
+    // onto the desktop at the cursor position each frame.
+    private void CreateMarker()
+    {
+        var pixels = new byte[MarkerSize * MarkerSize * 4];
+        for (int y = 0; y < MarkerSize; y++)
+        {
+            for (int x = 0; x < MarkerSize; x++)
+            {
+                int i = (y * MarkerSize + x) * 4;
+                bool border = x < 2 || x >= MarkerSize - 2 || y < 2 || y >= MarkerSize - 2;
+                pixels[i + 0] = 0;                          // B
+                pixels[i + 1] = (byte)(border ? 0 : 240);  // G
+                pixels[i + 2] = (byte)(border ? 0 : 240);  // R  → black border, yellow fill
+                pixels[i + 3] = 255;                        // A
+            }
+        }
+
+        var desc = new Texture2DDescription
+        {
+            Width = MarkerSize,
+            Height = MarkerSize,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = Format.B8G8R8A8_UNorm,
+            SampleDescription = SampleDescription.Default,
+            Usage = ResourceUsage.Default,
+            BindFlags = BindFlags.None,
+            CPUAccessFlags = CpuAccessFlags.None,
+            MiscFlags = ResourceOptionFlags.None,
+        };
+
+        GCHandle handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+        try
+        {
+            var data = new SubresourceData(handle.AddrOfPinnedObject(), MarkerSize * 4);
+            _markerTexture = _device!.CreateTexture2D(desc, new[] { data });
+        }
+        finally
+        {
+            handle.Free();
+        }
+    }
+
+    // Copy the marker onto the captured desktop at the current cursor position.
+    // Composited in NATIVE desktop space (the Video Processor scales it with the
+    // rest of the frame), so no coordinate scaling is needed.
+    private void CompositeCursorMarker()
+    {
+        if (_markerTexture is null || _duplicator is null || _captureTexture is null) return;
+        if (!Win32.GetCursorPos(out Win32.POINT p)) return;
+
+        // Show only when the cursor is over the primary display (origin 0,0).
+        if (p.X < 0 || p.X >= _duplicator.Width || p.Y < 0 || p.Y >= _duplicator.Height) return;
+
+        int x = Math.Clamp(p.X - MarkerSize / 2, 0, _duplicator.Width - MarkerSize);
+        int y = Math.Clamp(p.Y - MarkerSize / 2, 0, _duplicator.Height - MarkerSize);
+        _context!.CopySubresourceRegion(_captureTexture, 0, x, y, 0, _markerTexture, 0, null);
+    }
+
     private void HandleResize()
     {
         _pendingResize = false;
@@ -525,6 +592,9 @@ public sealed class R1ProbeWindowHost
             _loggedFirstFrame = true;
             Console.WriteLine("[ScreenBridge] first desktop frame captured — scaling + presenting");
         }
+
+        // Composite the pointer marker onto the desktop before encode/display.
+        CompositeCursorMarker();
 
         // W2a: convert the captured frame to NV12 and feed the H.264 encoder. The
         // display below is independent (passthrough), so encoder issues stay isolated.
@@ -620,6 +690,8 @@ public sealed class R1ProbeWindowHost
         _videoProcessor = null;
         _vpEnum?.Dispose();
         _vpEnum = null;
+        _markerTexture?.Dispose();
+        _markerTexture = null;
         _captureTexture?.Dispose();
         _captureTexture = null;
         _duplicator?.Dispose();

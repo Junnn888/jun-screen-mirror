@@ -141,4 +141,17 @@ internal static partial class Win32
     [LibraryImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool QueryPerformanceFrequency(out long lpFrequency);
+
+    // Cursor position (physical pixels under PerMonitorV2) for compositing a
+    // pointer marker — Desktop Duplication does not capture the cursor.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetCursorPos(out POINT lpPoint);
 }

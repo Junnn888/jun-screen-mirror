@@ -15,8 +15,6 @@ namespace ScreenBridge;
 public sealed partial class MainWindow : Window
 {
     private readonly R1ProbeWindowHost _probe = new();
-    // Constructed on the UI thread so NAudio's stop callbacks marshal back here.
-    private readonly WindowsAudioLoopback _audio = new();
 
     public MainWindow()
     {
@@ -41,24 +39,15 @@ public sealed partial class MainWindow : Window
             status += "\n\nViewer FAILED to start:\n" + ex;
         }
 
-        try
-        {
-            _audio.Start();
-            status += "\n\nAudio loopback running (WASAPI → Opus → WASAPI). NOTE: on one machine " +
-                "this feeds back — play audio briefly to verify, expect an escalating echo.";
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("[ScreenBridge] audio loopback FAILED to start: " + ex);
-            status += "\n\nAudio loopback FAILED to start:\n" + ex;
-        }
+        // Audio loopback is DEFERRED: capture + Opus round-trip work (logs confirm)
+        // but WASAPI playout is silent on this setup, and audio isn't needed for the
+        // current goal. Disabled so it doesn't compete with the video render loop;
+        // the implementation is kept in WindowsAudioLoopback.cs for a later fix —
+        // re-enable by constructing + Start()ing it here (and Dispose on Closed).
+        status += "\n\nAudio loopback: disabled (deferred — see WindowsAudioLoopback.cs).";
 
         StatusText.Text = status;
 
-        Closed += (_, _) =>
-        {
-            _probe.Stop();
-            _audio.Dispose();
-        };
+        Closed += (_, _) => _probe.Stop();
     }
 }
