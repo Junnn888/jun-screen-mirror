@@ -122,4 +122,13 @@ internal static partial class Win32
 
     [LibraryImport("kernel32.dll", EntryPoint = "GetModuleHandleW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     public static partial nint GetModuleHandleW(string? lpModuleName);
+
+    // Attach a WinExe to its launching console so Console.WriteLine diagnostics
+    // are visible when the app is started from PowerShell/cmd (parity with the
+    // macOS `swift run` terminal logs). ATTACH_PARENT_PROCESS = (DWORD)-1.
+    public const uint ATTACH_PARENT_PROCESS = 0xFFFFFFFF;
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool AttachConsole(uint dwProcessId);
 }

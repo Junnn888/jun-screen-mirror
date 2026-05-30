@@ -1,0 +1,14 @@
+{
+  "originHash" : "4d008b36173820de8b06462d85f33ca12038e7b0cfb8e9e669e909248b7e136e",
+  "pins" : [
+    {
+      "identity" : "swift-opus",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/alta/swift-opus.git",
+      "state" : {
+        "revision" : "6f3cb6bd3ffed1fe5f06d00a962d5c191a50daf8"
+      }
+    }
+  ],
+  "version" : 3
+}

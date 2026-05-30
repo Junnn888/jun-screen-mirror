@@ -1,3 +1,6 @@
+using System;
+using System.IO;
+
 using Microsoft.UI.Xaml;
 
 namespace ScreenBridge;
@@ -13,6 +16,14 @@ public partial class App : Application
 
     public App()
     {
+        // Route Console diagnostics to the launching terminal (if any) so the
+        // capture/encode logs are visible like the macOS `swift run` output.
+        if (Win32.AttachConsole(Win32.ATTACH_PARENT_PROCESS))
+        {
+            var stdout = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
+            Console.SetOut(stdout);
+        }
+
         InitializeComponent();
     }
 

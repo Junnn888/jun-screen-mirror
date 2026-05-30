@@ -39,13 +39,20 @@ let package = Package(
     name: "ScreenBridge",
     // PLAN.md §3: macOS 13+ (ScreenCaptureKit system audio).
     platforms: [.macOS(.v13)],
+    dependencies: [
+        // libopus SPM wrapper (PLAN.md §3: Opus in the native layer). It vendors
+        // libopus as a git submodule SPM fetches automatically. Pinned to an exact
+        // reviewed revision (PLAN.md §7 dependency pinning) — no semver tag covers
+        // the maintained HEAD. This commit builds clean under Swift 6 language mode.
+        .package(url: "https://github.com/alta/swift-opus.git", revision: "6f3cb6bd3ffed1fe5f06d00a962d5c191a50daf8"),
+    ],
     targets: [
         // Exposes the cbindgen-generated C ABI as a Clang module.
         .systemLibrary(name: "CScreenBridge", path: "Sources/CScreenBridge"),
-        // The SwiftUI app shell (empty window in Phase 0).
+        // The SwiftUI app + Phase 1 capture/encode/decode/render/audio pipeline.
         .executableTarget(
             name: "ScreenBridgeApp",
-            dependencies: ["CScreenBridge"],
+            dependencies: ["CScreenBridge", .product(name: "Opus", package: "swift-opus")],
             path: "Sources/ScreenBridgeApp",
             swiftSettings: cInterop,
             linkerSettings: linkCore
