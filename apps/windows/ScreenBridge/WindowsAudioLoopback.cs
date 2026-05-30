@@ -14,65 +14,68 @@ namespace ScreenBridge;
 /// macOS AudioLoopback. WASAPI is wrapped by NAudio; Opus by Concentus (pure C#).
 /// </summary>
 /// <remarks>
-/// The captured mix format is the device's (32-bit float, 44.1k OR 48k, usually
-/// stereo), so it is resampled to the 48 kHz stereo Opus requires and chopped
-/// into exact 20 ms (960-sample) frames. Everything runs on NAudio's single
-/// capture thread, so the non-thread-safe Concentus codecs need no locking.
+/// Kept as 32-bit FLOAT end to end: the WASAPI mix format is float, Concentus
+/// encodes/decodes float natively, and the playout format equals the mix format —
+/// so WASAPI shared mode needs no format conversion (a 16-bit play buffer through
+/// shared mode silently mis-converts on float-mix devices). The captured mix is
+/// resampled to 48 kHz stereo (Opus's rate) and chopped into exact 20 ms frames.
+/// Everything runs on NAudio's single capture thread, so the non-thread-safe
+/// Concentus codecs need no locking.
 ///
 /// KNOWN single-machine limitation: WASAPI loopback captures the render mix,
-/// which INCLUDES our own playout, so this feeds back (an escalating echo) —
-/// the macOS side avoids it with excludesCurrentProcessAudio (macOS 14+); the
-/// Windows equivalent is process-loopback exclusion, deferred as a refinement.
-/// There is no feedback in the Phase-2 two-device path.
+/// which includes our own playout, so this feeds back (escalating echo) — the
+/// macOS side avoids it with excludesCurrentProcessAudio (macOS 14+); the Windows
+/// equivalent is process-loopback exclusion (deferred, task #16). No feedback in
+/// the Phase-2 two-device path.
 /// </remarks>
 internal sealed class WindowsAudioLoopback : IDisposable
 {
     private const int SampleRate = 48000;
     private const int Channels = 2;
-    private const int FrameSamples = 960;                       // 20 ms @ 48 kHz, per channel
-    private const int FrameBytes = FrameSamples * Channels * 2; // interleaved 16-bit stereo
+    private const int FrameSamples = 960;            // 20 ms @ 48 kHz, per channel
+    private const int FrameFloats = FrameSamples * Channels; // interleaved stereo
 
     private WasapiLoopbackCapture? _capture;
     private BufferedWaveProvider? _captureBuffer;
-    private IWaveProvider? _resampledTo16;                      // 48 kHz / 16-bit / stereo
+    private ISampleProvider? _resampled;             // 48 kHz stereo float
     private WasapiOut? _output;
     private BufferedWaveProvider? _playBuffer;
     private IOpusEncoder? _encoder;
     private IOpusDecoder? _decoder;
 
     // Reused buffers (single capture thread → no allocation on the hot path).
-    private readonly byte[] _frame = new byte[FrameBytes];
-    private int _frameFilled;
-    private readonly short[] _pcm = new short[FrameSamples * Channels];
+    private readonly float[] _frame = new float[FrameFloats];
+    private int _frameFilled;                        // floats accumulated
     private readonly byte[] _packet = new byte[4000];
-    private readonly short[] _decoded = new short[FrameSamples * Channels];
-    private readonly byte[] _decodedBytes = new byte[FrameBytes];
+    private readonly float[] _decoded = new float[FrameFloats];
+    private readonly byte[] _decodedBytes = new byte[FrameFloats * sizeof(float)];
     private bool _loggedFirst;
 
     public void Start()
     {
-        // Force the pure-managed path (don't probe for a native libopus.dll).
+        // Force the pure-managed Opus path (don't probe for a native libopus.dll).
         OpusCodecFactory.AttemptToUseNativeLibrary = false;
         _encoder = OpusCodecFactory.CreateEncoder(SampleRate, Channels, OpusApplication.OPUS_APPLICATION_AUDIO);
         _encoder.Bitrate = 96000;
         _decoder = OpusCodecFactory.CreateDecoder(SampleRate, Channels);
 
-        // Capture the system mix and resample to exactly 48 kHz / 16-bit / stereo.
+        // Capture the system mix; resample to 48 kHz stereo float (passthrough when
+        // the mix is already 48 kHz).
         _capture = new WasapiLoopbackCapture();
         _captureBuffer = new BufferedWaveProvider(_capture.WaveFormat)
         {
             DiscardOnBufferOverflow = true,
             BufferDuration = TimeSpan.FromSeconds(2),
         };
-        ISampleProvider resampled = new WdlResamplingSampleProvider(_captureBuffer.ToSampleProvider(), SampleRate);
-        if (resampled.WaveFormat.Channels == 1)
+        ISampleProvider chain = new WdlResamplingSampleProvider(_captureBuffer.ToSampleProvider(), SampleRate);
+        if (chain.WaveFormat.Channels == 1)
         {
-            resampled = new MonoToStereoSampleProvider(resampled);
+            chain = new MonoToStereoSampleProvider(chain);
         }
-        _resampledTo16 = new SampleToWaveProvider16(resampled);
+        _resampled = chain;
 
-        // Playout buffer + WASAPI render (shared mode does its own SRC if needed).
-        _playBuffer = new BufferedWaveProvider(new WaveFormat(SampleRate, 16, Channels))
+        // Playout in the float mix format → WASAPI shared mode plays it directly.
+        _playBuffer = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(SampleRate, Channels))
         {
             DiscardOnBufferOverflow = true,
             BufferDuration = TimeSpan.FromSeconds(2),
@@ -85,7 +88,7 @@ internal sealed class WindowsAudioLoopback : IDisposable
         _output.Play();
 
         Console.WriteLine(
-            $"[ScreenBridge] audio loopback started: WASAPI loopback ({_capture.WaveFormat}) → Opus 48k stereo 20ms → WASAPI out");
+            $"[ScreenBridge] audio loopback started: WASAPI loopback ({_capture.WaveFormat}) → Opus 48k stereo 20ms (float) → WASAPI out");
     }
 
     // Fires on NAudio's dedicated capture thread.
@@ -93,12 +96,12 @@ internal sealed class WindowsAudioLoopback : IDisposable
     {
         _captureBuffer!.AddSamples(e.Buffer, 0, e.BytesRecorded);
 
-        // Drain the resampled stream into exact 960-sample frames.
+        // Drain the resampled stream into exact 960-sample (1920-float) frames.
         int read;
-        while ((read = _resampledTo16!.Read(_frame, _frameFilled, FrameBytes - _frameFilled)) > 0)
+        while ((read = _resampled!.Read(_frame, _frameFilled, FrameFloats - _frameFilled)) > 0)
         {
             _frameFilled += read;
-            if (_frameFilled < FrameBytes)
+            if (_frameFilled < FrameFloats)
             {
                 continue;
             }
@@ -109,9 +112,7 @@ internal sealed class WindowsAudioLoopback : IDisposable
 
     private void RoundTripFrame()
     {
-        Buffer.BlockCopy(_frame, 0, _pcm, 0, FrameBytes);
-
-        int encodedLen = _encoder!.Encode(_pcm, FrameSamples, _packet, _packet.Length);
+        int encodedLen = _encoder!.Encode(_frame, FrameSamples, _packet, _packet.Length);
         if (encodedLen <= 0)
         {
             return;
@@ -123,7 +124,7 @@ internal sealed class WindowsAudioLoopback : IDisposable
             return;
         }
 
-        int decodedBytes = decodedSamples * Channels * 2;
+        int decodedBytes = decodedSamples * Channels * sizeof(float);
         Buffer.BlockCopy(_decoded, 0, _decodedBytes, 0, decodedBytes);
         _playBuffer!.AddSamples(_decodedBytes, 0, decodedBytes);
 
