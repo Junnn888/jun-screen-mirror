@@ -54,8 +54,12 @@ internal sealed class H264HardwareEncoder : IDisposable
 
     private bool _loggedFirstOutput;
 
-    /// <summary>Receives each encoded sample's byte size and capture→encoded latency (QPC ticks).</summary>
-    public Action<int, long>? OnEncoded { get; set; }
+    /// <summary>
+    /// Receives each encoded sample (which the callback OWNS and must dispose),
+    /// its byte size, and capture→encoded latency in QPC ticks. In W2b the
+    /// callback hands the sample to the decoder.
+    /// </summary>
+    public Action<IMFSample, int, long>? OnEncoded { get; set; }
 
     public void Start(IMFDXGIDeviceManager deviceManager)
     {
@@ -218,9 +222,12 @@ internal sealed class H264HardwareEncoder : IDisposable
             return;
         }
 
-        using IMFSample encoded = output.Sample;
-        using IMFMediaBuffer buffer = encoded.ConvertToContiguousBuffer();
-        int size = buffer.CurrentLength;
+        IMFSample encoded = output.Sample;
+        int size;
+        using (IMFMediaBuffer buffer = encoded.GetBufferByIndex(0))
+        {
+            size = buffer.CurrentLength;
+        }
 
         long latencyTicks = 0;
         if (_submitTicks.Count > 0 && Win32.QueryPerformanceCounter(out long now))
@@ -233,7 +240,15 @@ internal sealed class H264HardwareEncoder : IDisposable
             _loggedFirstOutput = true;
             Console.WriteLine($"[ScreenBridge] first H.264 frame encoded ({size} bytes) — hardware encode path live");
         }
-        OnEncoded?.Invoke(size, latencyTicks);
+
+        if (OnEncoded is not null)
+        {
+            OnEncoded(encoded, size, latencyTicks); // callback consumes + disposes the sample
+        }
+        else
+        {
+            encoded.Dispose();
+        }
     }
 
     public void Dispose()

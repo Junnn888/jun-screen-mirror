@@ -89,6 +89,14 @@ public sealed class R1ProbeWindowHost
     private long _encBytesSum;
     private long _encLatTicksSum;
 
+    // W2b: synchronous D3D11VA decode + render the decoded frame.
+    private H264Decoder? _decoder;
+    private ID3D11Texture2D? _decodedTexture;   // current decoded NV12 frame (a texture-array slice)
+    private uint _decodedSlice;
+    private bool _haveDecoded;
+    private ID3D11VideoProcessorEnumerator? _nv12ToBgrEnum; // decoded NV12(1080p) → BGRA(window)
+    private ID3D11VideoProcessor? _nv12ToBgrProc;
+
     /// <summary>Starts the probe thread and blocks briefly until init succeeds or fails.</summary>
     public void Start()
     {
@@ -297,6 +305,33 @@ public sealed class R1ProbeWindowHost
 
         _encoder = new H264HardwareEncoder { OnEncoded = OnFrameEncoded };
         _encoder.Start(_deviceManager);
+
+        _decoder = new H264Decoder();
+        _decoder.Start(_deviceManager);
+
+        Win32.GetClientRect(_hwnd, out Win32.RECT rect);
+        BuildDecodedConverter((uint)Math.Max(rect.Width, 1), (uint)Math.Max(rect.Height, 1));
+    }
+
+    // Decoded NV12 (1080p) → BGRA back buffer. Output is window-sized, so this is
+    // rebuilt on resize (like the passthrough converter).
+    private void BuildDecodedConverter(uint outWidth, uint outHeight)
+    {
+        var content = new VideoProcessorContentDescription
+        {
+            InputFrameFormat = VideoFrameFormat.Progressive,
+            InputFrameRate = new Rational(60, 1),
+            InputWidth = EncWidth,
+            InputHeight = EncHeight,
+            OutputFrameRate = new Rational(60, 1),
+            OutputWidth = outWidth,
+            OutputHeight = outHeight,
+            Usage = VideoUsage.PlaybackNormal,
+        };
+        _nv12ToBgrEnum = _videoDevice!.CreateVideoProcessorEnumerator(content);
+        _nv12ToBgrProc = _videoDevice.CreateVideoProcessor(_nv12ToBgrEnum, 0);
+        _videoContext!.VideoProcessorSetStreamColorSpace(_nv12ToBgrProc, 0, new VideoProcessorColorSpace());
+        _videoContext.VideoProcessorSetOutputColorSpace(_nv12ToBgrProc, new VideoProcessorColorSpace());
     }
 
     // BGRA desktop (native res) → NV12 1920x1080 for the encoder. Output size is
@@ -358,8 +393,24 @@ public sealed class R1ProbeWindowHost
         }
     }
 
-    private void OnFrameEncoded(int size, long latencyTicks)
+    private void OnFrameEncoded(IMFSample encoded, int size, long latencyTicks)
     {
+        // Decode (synchronous, D3D11VA) and keep the latest decoded frame to render.
+        try
+        {
+            if (_decoder is not null && _decoder.Decode(encoded, out ID3D11Texture2D? decoded, out uint slice))
+            {
+                _decodedTexture?.Dispose();
+                _decodedTexture = decoded;
+                _decodedSlice = slice;
+                _haveDecoded = true;
+            }
+        }
+        finally
+        {
+            encoded.Dispose();
+        }
+
         _encCount++;
         _encBytesSum += size;
         _encLatTicksSum += latencyTicks;
@@ -368,7 +419,7 @@ public sealed class R1ProbeWindowHost
             double avgMs = _qpcFreq > 0 ? (_encLatTicksSum / 120.0) * 1000.0 / _qpcFreq : 0;
             long avgBytes = _encBytesSum / 120;
             Console.WriteLine(
-                $"[ScreenBridge] encoded {_encCount} frames: avg capture→encoded {avgMs:F2} ms, avg {avgBytes} bytes/frame (excludes decode + display scan-out)");
+                $"[ScreenBridge] {_encCount} frames: avg capture→encoded {avgMs:F2} ms, avg {avgBytes} bytes/frame (excludes display scan-out)");
             _encBytesSum = 0;
             _encLatTicksSum = 0;
         }
@@ -424,6 +475,16 @@ public sealed class R1ProbeWindowHost
         _vpEnum = null;
         BuildVideoProcessor((uint)_duplicator!.Width, (uint)_duplicator.Height,
                             (uint)rect.Width, (uint)rect.Height);
+
+        // The decoded-frame converter's output is also window-sized — rebuild it.
+        if (_nv12ToBgrEnum is not null)
+        {
+            _nv12ToBgrProc?.Dispose();
+            _nv12ToBgrProc = null;
+            _nv12ToBgrEnum?.Dispose();
+            _nv12ToBgrEnum = null;
+            BuildDecodedConverter((uint)rect.Width, (uint)rect.Height);
+        }
     }
 
     // MARK: loop
@@ -478,20 +539,39 @@ public sealed class R1ProbeWindowHost
             _encoder.Pump();
         }
 
-        // Scale/convert the capture texture into the current flip-model back buffer.
         using ID3D11Texture2D backBuffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
-        using ID3D11VideoProcessorOutputView outputView = _videoDevice.CreateVideoProcessorOutputView(
-            backBuffer, _vpEnum!, new VideoProcessorOutputViewDescription
-            {
-                ViewDimension = VideoProcessorOutputViewDimension.Texture2D,
-                Texture2D = new Texture2DVideoProcessorOutputView { MipSlice = 0 },
-            });
 
-        var streams = new[]
+        if (_haveDecoded && _decodedTexture is not null && _nv12ToBgrProc is not null)
         {
-            new VideoProcessorStream { Enable = true, InputSurface = _vpInputView! },
-        };
-        _videoContext.VideoProcessorBlt(_videoProcessor, outputView, 0u, streams).CheckError();
+            // Real path: the DECODED NV12 frame (a texture-array slice) → back buffer.
+            using ID3D11VideoProcessorInputView decodedInput = _videoDevice.CreateVideoProcessorInputView(
+                _decodedTexture, _nv12ToBgrEnum!, new VideoProcessorInputViewDescription
+                {
+                    FourCC = 0,
+                    ViewDimension = VideoProcessorInputViewDimension.Texture2D,
+                    Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0, ArraySlice = _decodedSlice },
+                });
+            using ID3D11VideoProcessorOutputView decodedOutput = _videoDevice.CreateVideoProcessorOutputView(
+                backBuffer, _nv12ToBgrEnum!, new VideoProcessorOutputViewDescription
+                {
+                    ViewDimension = VideoProcessorOutputViewDimension.Texture2D,
+                    Texture2D = new Texture2DVideoProcessorOutputView { MipSlice = 0 },
+                });
+            var decodedStreams = new[] { new VideoProcessorStream { Enable = true, InputSurface = decodedInput } };
+            _videoContext.VideoProcessorBlt(_nv12ToBgrProc, decodedOutput, 0u, decodedStreams).CheckError();
+        }
+        else
+        {
+            // Fallback (until the first decoded frame arrives): passthrough capture.
+            using ID3D11VideoProcessorOutputView outputView = _videoDevice.CreateVideoProcessorOutputView(
+                backBuffer, _vpEnum!, new VideoProcessorOutputViewDescription
+                {
+                    ViewDimension = VideoProcessorOutputViewDimension.Texture2D,
+                    Texture2D = new Texture2DVideoProcessorOutputView { MipSlice = 0 },
+                });
+            var streams = new[] { new VideoProcessorStream { Enable = true, InputSurface = _vpInputView! } };
+            _videoContext.VideoProcessorBlt(_videoProcessor, outputView, 0u, streams).CheckError();
+        }
 
         Result present = _swapChain.Present(1, PresentFlags.None); // syncInterval=1 => vsync-paced
         if (present.Failure && present.Code == ResultCode.DeviceRemoved.Code)
@@ -502,9 +582,17 @@ public sealed class R1ProbeWindowHost
 
     private void DisposeGraphics()
     {
-        // Encoder + MF first (they hold the device manager + NV12 textures).
+        // Encoder + decoder + MF first (they hold the device manager + textures).
         _encoder?.Dispose();
         _encoder = null;
+        _decoder?.Dispose();
+        _decoder = null;
+        _decodedTexture?.Dispose();
+        _decodedTexture = null;
+        _nv12ToBgrProc?.Dispose();
+        _nv12ToBgrProc = null;
+        _nv12ToBgrEnum?.Dispose();
+        _nv12ToBgrEnum = null;
         for (int i = 0; i < Nv12PoolSize; i++)
         {
             _nv12OutputViews[i]?.Dispose();
