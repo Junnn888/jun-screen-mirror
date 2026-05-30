@@ -7,6 +7,7 @@ using SharpGen.Runtime;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
+using Vortice.MediaFoundation;
 using static Vortice.Direct3D11.D3D11;
 using static Vortice.DXGI.DXGI;
 // Disambiguate the two imported ResultCode types (CS0104). Present()/swapchain
@@ -68,6 +69,25 @@ public sealed class R1ProbeWindowHost
     private ID3D11VideoProcessor? _videoProcessor;
     private ID3D11VideoProcessorInputView? _vpInputView;
     private bool _loggedFirstFrame;
+
+    // W2a: Media Foundation H.264 hardware encode (display still uses the
+    // passthrough above; the encoder runs alongside it and logs).
+    private const int EncWidth = 1920;
+    private const int EncHeight = 1080;
+    private const int Nv12PoolSize = 4;
+    private IMFDXGIDeviceManager? _deviceManager;
+    private H264HardwareEncoder? _encoder;
+    private bool _mfStarted;
+    private ID3D11VideoProcessorEnumerator? _nv12Enum;        // BGRA(native) → NV12(1080p), fixed
+    private ID3D11VideoProcessor? _nv12Proc;
+    private ID3D11VideoProcessorInputView? _nv12InputView;
+    private readonly ID3D11Texture2D?[] _nv12Pool = new ID3D11Texture2D?[Nv12PoolSize];
+    private readonly ID3D11VideoProcessorOutputView?[] _nv12OutputViews = new ID3D11VideoProcessorOutputView?[Nv12PoolSize];
+    private int _nv12Index;
+    private long _qpcFreq;
+    private int _encCount;
+    private long _encBytesSum;
+    private long _encLatTicksSum;
 
     /// <summary>Starts the probe thread and blocks briefly until init succeeds or fails.</summary>
     public void Start()
@@ -256,6 +276,102 @@ public sealed class R1ProbeWindowHost
 
         Console.WriteLine(
             $"[ScreenBridge] viewer pipeline up: {_duplicator.Width}x{_duplicator.Height} desktop → flip-model swapchain (DDA + Video Processor)");
+
+        SetupEncoder();
+    }
+
+    // MARK: W2a — Media Foundation H.264 hardware encode (runs alongside the
+    // passthrough display so a misbehaving encoder can't black out the window).
+
+    private void SetupEncoder()
+    {
+        Win32.QueryPerformanceFrequency(out _qpcFreq);
+
+        MediaFactory.MFStartup().CheckError();
+        _mfStarted = true;
+
+        _deviceManager = MediaFactory.MFCreateDXGIDeviceManager();
+        _deviceManager.ResetDevice(_device!).CheckError();
+
+        BuildNv12Converter();
+
+        _encoder = new H264HardwareEncoder { OnEncoded = OnFrameEncoded };
+        _encoder.Start(_deviceManager);
+    }
+
+    // BGRA desktop (native res) → NV12 1920x1080 for the encoder. Output size is
+    // fixed (independent of the window), so this is built once.
+    private void BuildNv12Converter()
+    {
+        var content = new VideoProcessorContentDescription
+        {
+            InputFrameFormat = VideoFrameFormat.Progressive,
+            InputFrameRate = new Rational(60, 1),
+            InputWidth = (uint)_duplicator!.Width,
+            InputHeight = (uint)_duplicator.Height,
+            OutputFrameRate = new Rational(60, 1),
+            OutputWidth = EncWidth,
+            OutputHeight = EncHeight,
+            Usage = VideoUsage.PlaybackNormal,
+        };
+        _nv12Enum = _videoDevice!.CreateVideoProcessorEnumerator(content);
+        _nv12Proc = _videoDevice.CreateVideoProcessor(_nv12Enum, 0);
+
+        // RGB→YCbCr is inferred from the BGRA→NV12 formats; defaults are fine for
+        // W2a (exact range/matrix tuning is a Phase-4 concern). Uses the same
+        // field-name-free initializer the W1 passthrough already compiles with.
+        _videoContext!.VideoProcessorSetStreamColorSpace(_nv12Proc, 0, new VideoProcessorColorSpace());
+        _videoContext.VideoProcessorSetOutputColorSpace(_nv12Proc, new VideoProcessorColorSpace());
+
+        _nv12InputView = _videoDevice.CreateVideoProcessorInputView(_captureTexture!, _nv12Enum,
+            new VideoProcessorInputViewDescription
+            {
+                FourCC = 0,
+                ViewDimension = VideoProcessorInputViewDimension.Texture2D,
+                Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0, ArraySlice = 0 },
+            });
+
+        // A small pool of NV12 targets so a frame the encoder is still reading is
+        // not overwritten before it finishes (≈1–2 frame encode latency).
+        for (int i = 0; i < Nv12PoolSize; i++)
+        {
+            var desc = new Texture2DDescription
+            {
+                Width = EncWidth,
+                Height = EncHeight,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Format.NV12,
+                SampleDescription = SampleDescription.Default,
+                Usage = ResourceUsage.Default,
+                BindFlags = BindFlags.RenderTarget,
+                CPUAccessFlags = CpuAccessFlags.None,
+                MiscFlags = ResourceOptionFlags.None,
+            };
+            _nv12Pool[i] = _device!.CreateTexture2D(desc);
+            _nv12OutputViews[i] = _videoDevice.CreateVideoProcessorOutputView(_nv12Pool[i]!, _nv12Enum,
+                new VideoProcessorOutputViewDescription
+                {
+                    ViewDimension = VideoProcessorOutputViewDimension.Texture2D,
+                    Texture2D = new Texture2DVideoProcessorOutputView { MipSlice = 0 },
+                });
+        }
+    }
+
+    private void OnFrameEncoded(int size, long latencyTicks)
+    {
+        _encCount++;
+        _encBytesSum += size;
+        _encLatTicksSum += latencyTicks;
+        if (_encCount % 120 == 0)
+        {
+            double avgMs = _qpcFreq > 0 ? (_encLatTicksSum / 120.0) * 1000.0 / _qpcFreq : 0;
+            long avgBytes = _encBytesSum / 120;
+            Console.WriteLine(
+                $"[ScreenBridge] encoded {_encCount} frames: avg capture→encoded {avgMs:F2} ms, avg {avgBytes} bytes/frame (excludes decode + display scan-out)");
+            _encBytesSum = 0;
+            _encLatTicksSum = 0;
+        }
     }
 
     // The content description bakes in the input AND output dimensions, so the
@@ -349,6 +465,19 @@ public sealed class R1ProbeWindowHost
             Console.WriteLine("[ScreenBridge] first desktop frame captured — scaling + presenting");
         }
 
+        // W2a: convert the captured frame to NV12 and feed the H.264 encoder. The
+        // display below is independent (passthrough), so encoder issues stay isolated.
+        if (_encoder is not null && _nv12Proc is not null && _nv12InputView is not null)
+        {
+            int idx = _nv12Index;
+            _nv12Index = (_nv12Index + 1) % Nv12PoolSize;
+            var encStreams = new[] { new VideoProcessorStream { Enable = true, InputSurface = _nv12InputView } };
+            _videoContext.VideoProcessorBlt(_nv12Proc, _nv12OutputViews[idx]!, 0u, encStreams).CheckError();
+            Win32.QueryPerformanceCounter(out long captureTicks);
+            _encoder.Submit(_nv12Pool[idx]!, captureTicks);
+            _encoder.Pump();
+        }
+
         // Scale/convert the capture texture into the current flip-model back buffer.
         using ID3D11Texture2D backBuffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
         using ID3D11VideoProcessorOutputView outputView = _videoDevice.CreateVideoProcessorOutputView(
@@ -373,6 +502,30 @@ public sealed class R1ProbeWindowHost
 
     private void DisposeGraphics()
     {
+        // Encoder + MF first (they hold the device manager + NV12 textures).
+        _encoder?.Dispose();
+        _encoder = null;
+        for (int i = 0; i < Nv12PoolSize; i++)
+        {
+            _nv12OutputViews[i]?.Dispose();
+            _nv12OutputViews[i] = null;
+            _nv12Pool[i]?.Dispose();
+            _nv12Pool[i] = null;
+        }
+        _nv12InputView?.Dispose();
+        _nv12InputView = null;
+        _nv12Proc?.Dispose();
+        _nv12Proc = null;
+        _nv12Enum?.Dispose();
+        _nv12Enum = null;
+        _deviceManager?.Dispose();
+        _deviceManager = null;
+        if (_mfStarted)
+        {
+            MediaFactory.MFShutdown();
+            _mfStarted = false;
+        }
+
         _vpInputView?.Dispose();
         _vpInputView = null;
         _videoProcessor?.Dispose();

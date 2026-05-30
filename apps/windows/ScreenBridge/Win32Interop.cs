@@ -131,4 +131,14 @@ internal static partial class Win32
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool AttachConsole(uint dwProcessId);
+
+    // High-resolution timer for capture→encoded latency (parity with macOS's
+    // mach_absolute_time). PLAN.md §9: latency measured via QueryPerformanceCounter.
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool QueryPerformanceCounter(out long lpPerformanceCount);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool QueryPerformanceFrequency(out long lpFrequency);
 }
